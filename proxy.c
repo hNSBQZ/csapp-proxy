@@ -4,6 +4,9 @@
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 
+#define NTHREADS 4
+#define SBUFSIZE 16
+
 #define Err int
 #define ERR 1
 #define NIL 0
@@ -20,11 +23,31 @@ typedef struct uriData
     char path[MAXLINE];
 }UriData;
 
+typedef struct SBUF{
+    int *buf;
+    int n;
+    int front;
+    int rear;
+    sem_t mutex;
+    sem_t slots;
+    sem_t items;
+}sbuf_t;
+
 void doit(int fd);
 Err parse_uri(char *uri,UriData *uri_data);
 Err read_requesthdr(rio_t *rp,UriData *uri_data);
 void send_request(int server_fd,int client_fd,UriData *uri_data);
 void send_response(int server_fd,int client_fd);
+
+//operate buffer
+void sbuf_init(sbuf_t *sp,int n);
+void sbuf_deinit(sbuf_t *sp);
+void sbuf_insert(sbuf_t *sp,int item);
+int sbuf_remove(sbuf_t *sp);
+
+void *thread(void *vargp);
+
+sbuf_t sbuf;
 
 int main(int argc,char **argv)
 {
@@ -32,6 +55,7 @@ int main(int argc,char **argv)
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
+    pthread_t tid;
 
     /* Check command line args */
     if (argc != 2) {
@@ -39,15 +63,28 @@ int main(int argc,char **argv)
 	exit(1);
     }
 
+    sbuf_init(&sbuf,SBUFSIZE);
+    for(int i=0;i<NTHREADS;i++)
+        Pthread_create(&tid,NULL,thread,NULL);
+
     listenfd = Open_listenfd(argv[1]);
     while (1) {
-	clientlen = sizeof(clientaddr);
-	connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); //line:netp:tiny:accept
+        clientlen = sizeof(clientaddr);
+        connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); //line:netp:tiny:accept
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, 
                     port, MAXLINE, 0);
         printf("Accepted connection from (%s, %s)\n", hostname, port);
-	doit(connfd);                                             //line:netp:tiny:doit
-	Close(connfd);                                            //line:netp:tiny:close
+        sbuf_insert(&sbuf,connfd);
+    }
+}
+
+void *thread(void *vargp)
+{
+    Pthread_detach(pthread_self());
+    while(1)
+    {
+        int client_fd=sbuf_remove(&sbuf);
+        doit(client_fd);
     }
 }
 
@@ -66,7 +103,7 @@ void doit(int client_fd)
     sscanf(buf,"%s %s %s",method,uri,version);
 
     //只接受GET
-    if(!strcmp(method,"GET"))
+    if(strcmp(method,"GET"))
         return;
     
     //解析请求内容
@@ -101,6 +138,7 @@ void doit(int client_fd)
 */
 Err parse_uri(char *uri,UriData *uri_data)
 {
+    printf("parse_uri\n");
     if(!strlen(uri))
         return ERR;
 
@@ -140,6 +178,9 @@ Err parse_uri(char *uri,UriData *uri_data)
     }
     if(strlen(uri_data->host_name)==0)
         strcpy(uri_data->host_name,"UNKNOW");
+    puts(uri_data->host_name);
+    puts(uri_data->path);
+    puts(uri_data->port);
     return NIL;
     
 }
@@ -147,6 +188,7 @@ Err parse_uri(char *uri,UriData *uri_data)
 //读取请求头
 Err read_requesthdr(rio_t *rp,UriData *uri_data)
 {
+    printf("read_requesthdr\n");
     char buf[MAXLINE];
     rio_readlineb(rp,buf,MAXLINE);
     while(strcmp(buf,"\r\n"))
@@ -187,8 +229,43 @@ void send_response(int server_fd,int client_fd)
     Rio_readinitb(&rio,server_fd);
     int n;
     char buf[MAXLINE];
-    while(n=Rio_readlineb(&rio,buf,MAXLINE))
+    while((n=Rio_readlineb(&rio,buf,MAXLINE)))
     {
         Rio_writen(client_fd, buf, n);
     }
+}
+
+void sbuf_init(sbuf_t *sp,int n)
+{
+    sp->buf=Calloc(n,sizeof(int));
+    sp->n=n;
+    sp->front=sp->rear=0;
+    Sem_init(&sp->mutex,0,1);
+    Sem_init(&sp->slots,0,n);
+    Sem_init(&sp->items,0,0);
+}
+
+void sbuf_deinit(sbuf_t *sp)
+{
+    Free(sp->buf);
+}
+
+void sbuf_insert(sbuf_t *sp,int item)
+{
+    P(&sp->slots);
+    P(&sp->mutex);
+    sp->buf[(++sp->rear)%(sp->n)]=item;
+    V(&sp->mutex);
+    V(&sp->items);
+}
+
+int sbuf_remove(sbuf_t *sp)
+{
+    int item;
+    P(&sp->items);
+    P(&sp->mutex);
+    item=sp->buf[(++sp->front)%(sp->n)];
+    V(&sp->mutex);
+    V(&sp->slots);
+    return item;
 }

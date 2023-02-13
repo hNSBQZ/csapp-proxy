@@ -17,16 +17,15 @@ static const char *Proxy_connection_hdr="Proxy-Connection: close\r\n";
 
 int main()
 {
-    char request[MAXLINE],header_host[MAXLINE];
-    memset(request,0,MAXLINE);
-    memset(header_host,0,MAXLINE);
-    sprintf(request,"GET %s HTTP/1.0\r\n","/jjj/uuu");
-    sprintf(header_host,"Host: %s\r\n","hqz.com");
-    sprintf(request,"%s%s",request,header_host);
-    sprintf(request,"%s%s",request,user_agent_hdr);
-    sprintf(request,"%s%s",request,connection_hdr);
-    sprintf(request,"%s%s",request,Proxy_connection_hdr);
-    sprintf(request,"%s\r\n",request);
-    puts(request);
+    char *buf="GET http://localhost:8080/home.html HTTP/1.1\r\n";
+    char uri[MAXLINE],method[MAXLINE],version[MAXLINE];
+    printf("request header from client:\n");
+    printf("%s",buf);
+    sscanf(buf,"%s %s %s",method,uri,version);
+
+    //只接受GET
+    puts(method);
+    printf("%d\n",strlen(method));
+    printf("%d\n",strcmp(method,"GET"));
     return 0;
 }
