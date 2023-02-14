@@ -24,8 +24,8 @@ int main()
     sscanf(buf,"%s %s %s",method,uri,version);
 
     //只接受GET
-    puts(method);
-    printf("%d\n",strlen(method));
-    printf("%d\n",strcmp(method,"GET"));
+    puts(uri);
+    printf("%d\n",strlen(uri));
+    printf("%d\n",strcmp(uri,"http://localhost:8080/home.html"));
     return 0;
 }
